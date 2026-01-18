@@ -1,0 +1,350 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+  <meta name="theme-color" content="#0c0c10"/>
+  <link rel="manifest" href="manifest.json">
+  <title>Echoes v0.1</title>
+  <style>
+    html,body{margin:0;background:#0c0c10;color:#eaeaf2;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
+    canvas{display:block;touch-action:none;}
+    .ui{position:fixed;left:0;top:0;right:0;bottom:0;pointer-events:none;}
+    .btn{position:absolute;pointer-events:auto;user-select:none;-webkit-user-select:none;
+         background:rgba(40,40,55,.75);border:2px solid rgba(140,140,170,.7);
+         border-radius:18px;color:#eaeaf2;font-weight:800;display:flex;align-items:center;justify-content:center;}
+    #atk{right:16px;bottom:96px;width:124px;height:74px;}
+    #blk{right:16px;bottom:16px;width:124px;height:74px;}
+    #hint{position:absolute;left:12px;top:10px;font-weight:700;opacity:.85;}
+    #msg{position:absolute;left:12px;right:12px;bottom:12px;min-height:64px;
+         background:rgba(18,18,26,.88);border:1px solid rgba(120,120,150,.6);
+         border-radius:14px;padding:10px 12px;display:none;pointer-events:auto;}
+    #msg b{display:block;margin-bottom:4px;}
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="ui">
+  <div id="hint">Echoes v0.1 • Move left side • ATTACK / BLOCK • Tap NPC</div>
+  <div id="atk" class="btn">ATTACK</div>
+  <div id="blk" class="btn">BLOCK</div>
+  <div id="msg"></div>
+</div>
+
+<script>
+(() => {
+  // Register service worker (makes it installable + offline)
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    });
+  }
+
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const atkBtn = document.getElementById('atk');
+  const blkBtn = document.getElementById('blk');
+  const msgBox = document.getElementById('msg');
+
+  function resize(){
+    canvas.width = Math.floor(window.innerWidth * devicePixelRatio);
+    canvas.height = Math.floor(window.innerHeight * devicePixelRatio);
+    ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const W = () => window.innerWidth, H = () => window.innerHeight;
+
+  // --- Tiny playable slice (top-down, polished retro vibe) ---
+  const scenes = { HUB:'hub', VALE:'vale' };
+  let scene = scenes.HUB;
+
+  const player = {
+    x: W()*0.5, y: H()*0.62, r: 10,
+    hp: 100, stam: 100, block:false, blockT:0,
+    elem: 'Wind', // v0.1 mobile: Wind only
+    atkCD:0, slashT:0
+  };
+
+  const npc = { x: W()*0.52, y: H()*0.28, r: 14, name:'Gate Watcher' };
+  const exitDoor = { x: W()-110, y: H()*0.5-44, w: 92, h: 88, label:'To Vale' };
+
+  let enemies = [];
+  function spawnVale(){
+    enemies = [];
+    // higher-level & immune enemies (Wind immunity shows the “danger” concept)
+    for(let i=0;i<6;i++){
+      enemies.push({
+        x: 140+Math.random()*(W()-260),
+        y: 120+Math.random()*(H()-220),
+        r: 10,
+        hp: 35 + (i%3)*18,
+        lvl: 1 + (i%3),
+        immune: (i%4===0) ? 'Wind' : null,
+        cd: 0.6+Math.random()*0.7,
+        elite:false
+      });
+    }
+    enemies.push({ x: W()-180, y: H()*0.5, r: 14, hp: 160, lvl: 4, immune:'Wind', cd:0.9, elite:true });
+  }
+
+  // --- Dialogue ---
+  function showMsg(title, lines){
+    msgBox.style.display = 'block';
+    msgBox.innerHTML = `<b>${title}</b>` + lines.map(x=>`<div>${x}</div>`).join('');
+  }
+  msgBox.addEventListener('pointerdown', () => msgBox.style.display='none');
+
+  // --- Touch movement (left-side virtual stick) ---
+  let stick = { active:false, id:null, sx:0, sy:0, x:0, y:0 };
+  function inLeftSide(px){ return px < W()*0.55; }
+
+  window.addEventListener('pointerdown', (e)=>{
+    const px = e.clientX, py = e.clientY;
+    if(inLeftSide(px) && !stick.active){
+      stick.active = true; stick.id = e.pointerId;
+      stick.sx = px; stick.sy = py; stick.x = px; stick.y = py;
+    }
+  }, {passive:false});
+
+  window.addEventListener('pointermove', (e)=>{
+    if(stick.active && e.pointerId === stick.id){
+      stick.x = e.clientX; stick.y = e.clientY;
+    }
+  }, {passive:false});
+
+  window.addEventListener('pointerup', (e)=>{
+    if(stick.active && e.pointerId === stick.id){
+      stick.active = false; stick.id = null;
+    }
+  }, {passive:false});
+
+  // Buttons
+  let attackHeld=false;
+  atkBtn.addEventListener('pointerdown', ()=>{ attackHeld=true; }, {passive:true});
+  window.addEventListener('pointerup', ()=>{ attackHeld=false; }, {passive:true});
+
+  blkBtn.addEventListener('pointerdown', ()=>{
+    if(!player.block){
+      player.block = true;
+      player.blockT = 0;
+    }
+  }, {passive:true});
+  window.addEventListener('pointerup', ()=>{ player.block=false; }, {passive:true});
+
+  // Tap NPC / door
+  window.addEventListener('pointerdown', (e)=>{
+    const px=e.clientX, py=e.clientY;
+
+    // avoid if over buttons
+    const rAtk = atkBtn.getBoundingClientRect();
+    const rBlk = blkBtn.getBoundingClientRect();
+    if((px>=rAtk.left && px<=rAtk.right && py>=rAtk.top && py<=rAtk.bottom) ||
+       (px>=rBlk.left && px<=rBlk.right && py>=rBlk.top && py<=rBlk.bottom)) return;
+
+    if(scene===scenes.HUB){
+      const d = Math.hypot(px-npc.x, py-npc.y);
+      if(d < 42){
+        showMsg(npc.name, [
+          "You’re heading out?",
+          "People stopped doing that.",
+          "Ashroot Vale is worse.",
+          "Some things don’t even feel the Wind."
+        ]);
+        return;
+      }
+      // door
+      if(px>exitDoor.x && px<exitDoor.x+exitDoor.w && py>exitDoor.y && py<exitDoor.y+exitDoor.h){
+        scene = scenes.VALE;
+        player.x = 120; player.y = H()*0.55;
+        spawnVale();
+        showMsg("Warning", ["The ground never cooled.", "Neither did what lived through it."]);
+        return;
+      }
+    } else {
+      // back gesture: tap left edge to return
+      if(px < 70){
+        scene = scenes.HUB;
+        player.x = W()*0.5; player.y = H()*0.62;
+        enemies = [];
+        showMsg("Way Back", ["You return to the ruins—wiser, not forgiven."]);
+      }
+    }
+  }, {passive:true});
+
+  function update(dt){
+    const regen = player.block ? 6 : 16;
+    player.stam = Math.min(100, player.stam + regen*dt);
+    if(player.block) player.blockT += dt;
+
+    // move from stick
+    let mx=0,my=0;
+    if(stick.active){
+      const dx = stick.x - stick.sx;
+      const dy = stick.y - stick.sy;
+      const len = Math.hypot(dx,dy);
+      if(len>6){ mx = dx/len; my = dy/len; }
+    }
+    const spd = player.block ? 110 : 170;
+    player.x += mx*spd*dt;
+    player.y += my*spd*dt;
+
+    // bounds
+    player.x = Math.max(26, Math.min(W()-26, player.x));
+    player.y = Math.max(26, Math.min(H()-26, player.y));
+
+    // attack
+    player.atkCD = Math.max(0, player.atkCD - dt);
+    player.slashT = Math.max(0, player.slashT - dt);
+
+    if(attackHeld && player.atkCD<=0 && player.stam>=12){
+      player.stam -= 12;
+      player.atkCD = 0.22;
+      player.slashT = 0.11;
+    }
+
+    // enemies in vale
+    if(scene===scenes.VALE){
+      for(const e of enemies){
+        const dx = player.x - e.x, dy = player.y - e.y;
+        const L = Math.hypot(dx,dy) || 1;
+        const nx=dx/L, ny=dy/L;
+        const es = 85 + e.lvl*18;
+        if(L>44){ e.x += nx*es*dt; e.y += ny*es*dt; }
+
+        e.cd -= dt;
+        if(e.cd<=0 && L<52){
+          e.cd = 0.8 + Math.random()*0.7;
+          let dmg = 10 + e.lvl*4 + (e.elite?6:0);
+
+          if(player.block && player.stam>0){
+            const perfect = player.blockT <= 0.14;
+            if(perfect){
+              player.stam = Math.min(100, player.stam + 18);
+              dmg = 0;
+            } else {
+              player.stam = Math.max(0, player.stam - 16);
+              dmg = Math.max(1, Math.floor(dmg*0.35));
+            }
+          }
+          player.hp -= dmg;
+          if(player.hp<=0){
+            player.hp=100; player.stam=100;
+            scene='hub'; enemies=[];
+            player.x=W()*0.5; player.y=H()*0.62;
+            showMsg("Death", ["The world takes what it can.", "You return—wiser, not forgiven."]);
+            break;
+          }
+        }
+
+        if(player.slashT>0){
+          const hitR = 34;
+          if(Math.hypot(e.x-player.x, e.y-player.y) < hitR + e.r){
+            if(!(e.immune==='Wind')) e.hp -= 12;
+          }
+        }
+      }
+      enemies = enemies.filter(e=>e.hp>0);
+    }
+  }
+
+  function draw(){
+    ctx.fillStyle = (scene===scenes.HUB) ? '#101018' : '#160f0d';
+    ctx.fillRect(0,0,W(),H());
+
+    // vignette border
+    ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+    ctx.lineWidth = 18;
+    ctx.strokeRect(0,0,W(),H());
+
+    // title
+    ctx.fillStyle = 'rgba(240,240,255,0.92)';
+    ctx.font = '800 22px system-ui';
+    ctx.fillText(scene===scenes.HUB ? 'NEXUS RUINS' : 'ASHROOT VALE (RISK)', 14, 34);
+
+    // door / back hint
+    if(scene===scenes.HUB){
+      ctx.fillStyle = 'rgba(70,70,90,0.75)';
+      ctx.fillRect(exitDoor.x, exitDoor.y, exitDoor.w, exitDoor.h);
+      ctx.strokeStyle='rgba(150,150,190,0.6)';
+      ctx.lineWidth=2;
+      ctx.strokeRect(exitDoor.x, exitDoor.y, exitDoor.w, exitDoor.h);
+      ctx.fillStyle='rgba(235,235,245,0.9)';
+      ctx.font='800 14px system-ui';
+      ctx.fillText(exitDoor.label, exitDoor.x+10, exitDoor.y+28);
+    } else {
+      ctx.fillStyle='rgba(220,220,240,0.65)';
+      ctx.font='700 14px system-ui';
+      ctx.fillText('Tap left edge to return', 14, H()-14);
+    }
+
+    // NPC
+    if(scene===scenes.HUB){
+      ctx.fillStyle='rgba(130,130,150,0.9)';
+      ctx.beginPath(); ctx.arc(npc.x,npc.y,npc.r,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='rgba(200,200,220,0.85)';
+      ctx.font='700 12px system-ui';
+      ctx.fillText(npc.name, npc.x-40, npc.y+26);
+    }
+
+    // enemies
+    if(scene===scenes.VALE){
+      for(const e of enemies){
+        ctx.fillStyle = e.elite ? 'rgba(210,170,120,0.9)' : 'rgba(170,130,110,0.9)';
+        ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2); ctx.fill();
+        if(e.immune==='Wind'){
+          ctx.strokeStyle='rgba(80,80,95,0.9)';
+          ctx.lineWidth=2;
+          ctx.beginPath(); ctx.arc(e.x,e.y,e.r+5,0,Math.PI*2); ctx.stroke();
+        }
+      }
+    }
+
+    // player
+    ctx.fillStyle='rgba(120,220,180,0.95)';
+    ctx.beginPath(); ctx.arc(player.x,player.y,player.r,0,Math.PI*2); ctx.fill();
+    if(player.block){
+      ctx.strokeStyle='rgba(220,235,255,0.75)';
+      ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(player.x,player.y,player.r+7,0,Math.PI*2); ctx.stroke();
+    }
+    if(player.slashT>0){
+      ctx.strokeStyle='rgba(160,240,210,0.9)';
+      ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(player.x,player.y,34,0,Math.PI*2); ctx.stroke();
+    }
+
+    // HUD
+    ctx.font='700 14px system-ui';
+    ctx.fillStyle='rgba(230,230,245,0.9)';
+    ctx.fillText(`HP ${Math.max(0,Math.floor(player.hp))}/100`, 14, 58);
+    ctx.fillText(`STA ${Math.max(0,Math.floor(player.stam))}/100`, 14, 78);
+    ctx.fillText(`Sword: Wind`, 14, 98);
+
+    // stick ring
+    if(stick.active){
+      ctx.strokeStyle='rgba(255,255,255,0.25)';
+      ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(stick.sx, stick.sy, 30, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(stick.x, stick.y, 10, 0, Math.PI*2); ctx.stroke();
+    }
+  }
+
+  let last = performance.now();
+  function loop(t){
+    const dt = Math.min(0.033, (t-last)/1000);
+    last = t;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // First-time vibe
+  showMsg("…", ["The world did not end all at once.", "It simply stopped trying.", "You still move."]);
+})();
+</script>
+</body>
+</html>
