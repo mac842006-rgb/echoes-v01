@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0c0c10"/>
+  <circle cx="256" cy="256" r="160" fill="#101018" stroke="#7fe1c0" stroke-width="14"/>
+  <path d="M256 120c40 40 40 88 0 128-40 40-40 88 0 128" fill="none" stroke="#7fe1c0" stroke-width="18" stroke-linecap="round"/>
+  <path d="M208 168c26 26 26 56 0 82-26 26-26 56 0 82" fill="none" stroke="#bfeee0" stroke-width="12" stroke-linecap="round" opacity="0.9"/>
+  <text x="256" y="420" font-size="44" text-anchor="middle" fill="#eaeaf2" font-family="system-ui" font-weight="800">ECHOES</text>
+</svg>
