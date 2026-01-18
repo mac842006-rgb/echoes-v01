@@ -1,4 +1,4 @@
-const CACHE = 'echoes-v01-' + self.registration.scope; // unique per site scope
+const CACHE = 'echoes-v01-001' // unique per site scope
 const ASSETS = [
   './',
   './index.html',
@@ -6,6 +6,12 @@ const ASSETS = [
   './icon.svg',
   './sw.js',
 ];
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
