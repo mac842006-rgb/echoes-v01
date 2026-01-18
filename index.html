@@ -31,15 +31,33 @@
   <div id="blk" class="btn">BLOCK</div>
   <div id="msg"></div>
 </div>
-
-<script>
-(() => {
-  // Register service worker (makes it installable + offline)
+  <script>
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    window.addEventListener('load', async () => {
+      try {
+        const reg = await navigator.serviceWorker.register('./sw.js');
+
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+
+        reg.addEventListener('updatefound', () => {
+          const sw = reg.installing;
+          if (!sw) return;
+
+          sw.addEventListener('statechange', () => {
+            if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+              location.reload();
+            }
+          });
+        });
+      } catch (e) {
+        console.warn('SW failed', e);
+      }
     });
   }
+  </script>
+
 
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
