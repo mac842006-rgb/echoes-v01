@@ -62,8 +62,22 @@
   window.addEventListener('resize', resize);
   resize();
 
-  const W = () => window.innerWidth, H = () => window.innerHeight;
+const W = () => window.innerWidth, H = () => window.innerHeight;
 
+// Virtual resolution (retro game space)
+const VW = 384;   // try 384 or 420 later if you want
+const VH = 216;   // 16:9-ish, good for phones
+  
+  function scale(){
+  return Math.min(W()/VW, H()/VH);
+}
+function ox(){
+  return (W() - VW*scale())/2;
+}
+function oy(){
+  return (H() - VH*scale())/2;
+}
+  
   // --- Tiny playable slice (top-down, polished retro vibe) ---
   const scenes = { HUB:'hub', VALE:'vale' };
   let scene = scenes.HUB;
@@ -258,8 +272,14 @@
   }
 
   function draw(){
-    ctx.fillStyle = (scene===scenes.HUB) ? '#101018' : '#160f0d';
-ctx.fillRect(0, 0, W(), H());
+    // --- reset to screen space ---
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#0c0c10';
+  ctx.fillRect(0, 0, VW(), VH());
+
+  // --- switch to virtual game camera ---
+  const s = scale();
+  ctx.setTransform(s, 0, 0, s, ox(), oy());
 
 // DEBUG: show center cross so we KNOW canvas is visible
 ctx.strokeStyle = 'rgba(255,255,255,0.5)';
