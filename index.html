@@ -259,7 +259,16 @@
 
   function draw(){
     ctx.fillStyle = (scene===scenes.HUB) ? '#101018' : '#160f0d';
-    ctx.fillRect(0,0,W(),H());
+ctx.fillRect(0, 0, W(), H());
+
+// DEBUG: show center cross so we KNOW canvas is visible
+ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+ctx.beginPath();
+ctx.moveTo(W()/2 - 20, H()/2);
+ctx.lineTo(W()/2 + 20, H()/2);
+ctx.moveTo(W()/2, H()/2 - 20);
+ctx.lineTo(W()/2, H()/2 + 20);
+ctx.stroke();
 
     // vignette border
     ctx.strokeStyle = 'rgba(0,0,0,0.65)';
